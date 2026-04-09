@@ -4,12 +4,18 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-void main() {
-  runApp(const MyApp());
+void main() async {
+  // Необхідно для ініціалізації SharedPreferences до запуску додатка
+  WidgetsFlutterBinding.ensureInitialized();
+  final prefs = await SharedPreferences.getInstance();
+  final bool isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
+
+  runApp(MyApp(isLoggedIn: isLoggedIn));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final bool isLoggedIn;
+  const MyApp({super.key, required this.isLoggedIn});
 
   @override
   Widget build(BuildContext context) {
@@ -20,12 +26,109 @@ class MyApp extends StatelessWidget {
         colorSchemeSeed: Colors.blueAccent,
         scaffoldBackgroundColor: Colors.white,
       ),
-      home: const MainMenu(),
+      // Якщо користувач увійшов — показуємо меню, якщо ні — екран логіну
+      home: isLoggedIn ? const MainMenu() : const LoginScreen(),
     );
   }
 }
 
-// --- ГОЛОВНЕ МЕНЮ (2 КНОПКИ) ---
+// --- ЕКРАН АВТОРИЗАЦІЇ ---
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _phoneController = TextEditingController();
+
+  Future<void> _login() async {
+    if (_formKey.currentState!.validate()) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isLoggedIn', true);
+      await prefs.setString('userName', _nameController.text);
+      
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const MainMenu()),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        padding: const EdgeInsets.all(25),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            colors: [Colors.blue.shade900, Colors.blue.shade600],
+          ),
+        ),
+        child: Center(
+          child: SingleChildScrollView(
+            child: Form(
+              key: _formKey,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.account_circle, size: 90, color: Colors.white),
+                  const SizedBox(height: 20),
+                  const Text(
+                    "Вхід в систему",
+                    style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 30),
+                  
+                  _buildInput(_nameController, "Ім'я", Icons.person, (v) => v!.isEmpty ? "Введіть ім'я" : null),
+                  const SizedBox(height: 15),
+                  
+                  _buildInput(_emailController, "Пошта", Icons.email, (v) => !v!.contains("@") ? "Невірний формат пошти" : null, type: TextInputType.emailAddress),
+                  const SizedBox(height: 15),
+                  
+                  _buildInput(_phoneController, "Телефон", Icons.phone, (v) => v!.length < 10 ? "Введіть коректний номер" : null, type: TextInputType.phone),
+                  
+                  const SizedBox(height: 30),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 60),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                    ),
+                    onPressed: _login,
+                    child: const Text("УВІЙТИ", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInput(TextEditingController ctrl, String label, IconData icon, String? Function(String?)? validator, {TextInputType type = TextInputType.text}) {
+    return TextFormField(
+      controller: ctrl,
+      keyboardType: type,
+      validator: validator,
+      decoration: InputDecoration(
+        filled: true,
+        fillColor: Colors.white,
+        prefixIcon: Icon(icon),
+        hintText: label,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+      ),
+    );
+  }
+}
+
+// --- ГОЛОВНЕ МЕНЮ (З КНОПКОЮ ВИХОДУ) ---
 class MainMenu extends StatelessWidget {
   const MainMenu({super.key});
 
@@ -46,7 +149,6 @@ class MainMenu extends StatelessWidget {
             const Icon(Icons.qr_code_2, size: 100, color: Colors.white),
             const SizedBox(height: 40),
             
-            // КНОПКА СКАНУВАТИ
             MenuButton(
               text: "СКАНУВАТИ",
               icon: Icons.camera_alt,
@@ -55,7 +157,6 @@ class MainMenu extends StatelessWidget {
             
             const SizedBox(height: 20),
             
-            // КНОПКА ГЕНЕРУВАТИ
             MenuButton(
               text: "ГЕНЕРУВАТИ",
               icon: Icons.edit,
@@ -67,6 +168,18 @@ class MainMenu extends StatelessWidget {
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryTabs())),
               icon: const Icon(Icons.history, color: Colors.white),
               label: const Text("Історія", style: TextStyle(color: Colors.white)),
+            ),
+
+            // КНОПКА ВИХОДУ
+            TextButton.icon(
+              onPressed: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool('isLoggedIn', false);
+                if (!context.mounted) return;
+                Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const LoginScreen()));
+              },
+              icon: const Icon(Icons.logout, color: Colors.white70, size: 20),
+              label: const Text("Вийти з акаунта", style: TextStyle(color: Colors.white70)),
             )
           ],
         ),
@@ -118,7 +231,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        // Кнопка назад у вигляді трикутника
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white), 
           onPressed: () => Navigator.pop(context),
@@ -145,7 +257,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
               }
             },
           ),
-          // Рамка по центру
           Center(
             child: Container(
               width: 250, height: 250,
@@ -169,9 +280,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text("Код знайдено!"),
+            const Text("Код знайдено!", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
-            Text(code, style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(code, textAlign: TextAlign.center),
             const SizedBox(height: 20),
             ElevatedButton(onPressed: () => _launchURL(code), child: const Text("Відкрити")),
             TextButton(onPressed: () { Navigator.pop(context); setState(() => _isScanned = false); }, child: const Text("Сканувати ще")),
@@ -198,7 +309,6 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        // Кнопка назад
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new),
           onPressed: () => Navigator.pop(context),
@@ -227,9 +337,9 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
                   List<String> history = prefs.getStringList('gen_history') ?? [];
                   history.insert(0, _data);
                   await prefs.setStringList('gen_history', history);
-                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Збережено!")));
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Збережено в історію!")));
                 },
-                child: const Text("Зберегти в історію"),
+                child: const Text("Зберегти"),
               )
             ]
           ],
@@ -239,7 +349,7 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
   }
 }
 
-// --- ЕКРАНИ ІСТОРІЇ (Аналогічно з кнопкою назад) ---
+// --- ІСТОРІЯ ---
 class HistoryTabs extends StatelessWidget {
   const HistoryTabs({super.key});
 
@@ -271,16 +381,18 @@ class HistoryList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<String>>(
-      future: SharedPreferences.getInstance().then((p) => p.getStringList(storageKey) ?? []),
+    return FutureBuilder<SharedPreferences>(
+      future: SharedPreferences.getInstance(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("Порожньо"));
+        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        final history = snapshot.data!.getStringList(storageKey) ?? [];
+        if (history.isEmpty) return const Center(child: Text("Історія порожня"));
         return ListView.builder(
-          itemCount: snapshot.data!.length,
-          itemBuilder: (context, i) => ListTile(
-            title: Text(snapshot.data![i], maxLines: 1),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 14), // Ще один "трикутник"
-            onTap: () => _launchURL(snapshot.data![i]),
+          itemCount: history.length,
+          itemBuilder: (context, index) => ListTile(
+            title: Text(history[index]),
+            leading: const Icon(Icons.qr_code),
+            onTap: () => _launchURL(history[index]),
           ),
         );
       },
@@ -288,9 +400,10 @@ class HistoryList extends StatelessWidget {
   }
 }
 
+// Функція для відкриття посилань
 Future<void> _launchURL(String url) async {
-  final uri = Uri.parse(url);
+  final Uri uri = Uri.parse(url);
   if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-    debugPrint("Could not launch $url");
+    // Якщо не посилання, просто нічого не робимо або виводимо помилку
   }
 }
