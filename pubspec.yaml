@@ -38,6 +38,8 @@ dependencies:
   path_provider: ^2.1.1 # Для тимчасового збереження картинки перед відправкою
   screenshot: ^3.0.0   # Для перетворення віджета QR у картинку
   wifi_iot: ^0.3.19  # Пакет для керування Wi-Fi підключеннями
+  firebase_core: ^4.7.0
+  firebase_auth: ^6.4.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

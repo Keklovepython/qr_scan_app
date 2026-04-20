@@ -9,13 +9,15 @@ import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:wifi_iot/wifi_iot.dart';
 import 'package:flutter/services.dart'; // Потрібно для буфера
-
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = await SharedPreferences.getInstance();
   final bool isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
-
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(MyApp(isLoggedIn: isLoggedIn));
 }
 
@@ -46,23 +48,77 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+
   final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
-  final _emailController = TextEditingController();
-  final _phoneController = TextEditingController();
 
   Future<void> _login() async {
     if (_formKey.currentState!.validate()) {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('isLoggedIn', true);
-      await prefs.setString('userName', _nameController.text);
+      try {
+        // 1. Создаем пользователя
+        final userCredential = await FirebaseAuth.instance
+            .createUserWithEmailAndPassword(
+              email: _emailController.text.trim(),
+              password: "temporaryPassword123",
+            );
 
-      if (!mounted) return;
+        // 2. Отправляем письмо
+        await userCredential.user?.sendEmailVerification();
+
+        // 3. Показываем диалог (функция должна быть описана ниже)
+        _showVerifyDialog();
+      } on FirebaseAuthException catch (e) {
+        if (e.code == 'email-already-in-use') {
+          // Если уже есть в базе — просто проверяем статус
+          _checkIfVerified();
+        } else {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text("Помилка ${e.message}")));
+        }
+      } catch (e) {
+        print(e); // Для отладки других ошибок
+      }
+    }
+  }
+
+  // Вспомогательный метод для проверки подтверждения
+  void _checkIfVerified() async {
+    User? user = FirebaseAuth.instance.currentUser;
+    await user?.reload(); // Обновляем статус из облака
+
+    if (user != null && user.emailVerified) {
+      // Если почта подтверждена — пускаем в меню
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => const MainMenu()),
       );
+    } else {
+      _showVerifyDialog();
     }
+  }
+
+  void _showVerifyDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Верифікуйте пошту"),
+        content: const Text(
+          "Ми відправили вам лист. Натисніть на посилання в ньому, а потім натисніть кнопку 'Підтвердив'.Обов'язково перевірте папку 'Спам', якщо не бачите листа.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _checkIfVerified(); // Проверяем статус при нажатии
+            },
+            child: const Text("Підтвердив"),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -103,6 +159,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     "Ім'я",
                     Icons.person,
                     (v) => v!.isEmpty ? "Введіть ім'я" : null,
+                    type: TextInputType.text,
                   ),
                   const SizedBox(height: 15),
                   _buildInput(
@@ -490,7 +547,7 @@ class HistoryListView extends StatelessWidget {
     return prefs.getStringList(storageKey) ?? [];
   }
 
- @override
+  @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<String>>(
       future: _loadHistory(),
@@ -499,14 +556,19 @@ class HistoryListView extends StatelessWidget {
           return const Center(child: CircularProgressIndicator());
         }
         final history = snapshot.data ?? [];
-        if (history.isEmpty) return const Center(child: Text("Історія порожня"));
+        if (history.isEmpty)
+          return const Center(child: Text("Історія порожня"));
 
         return ListView.builder(
           itemCount: history.length,
           itemBuilder: (context, index) {
             final item = history[index];
             return ListTile(
-              leading: Icon(storageKey == 'scan_history' ? Icons.qr_code_scanner : Icons.edit),
+              leading: Icon(
+                storageKey == 'scan_history'
+                    ? Icons.qr_code_scanner
+                    : Icons.edit,
+              ),
               title: Text(item, maxLines: 1, overflow: TextOverflow.ellipsis),
               subtitle: const Text("Натисніть, щоб відкрити"),
               onTap: () => _showDetails(context, item), // ОСЬ ТУТ ВИКЛИК
@@ -514,8 +576,9 @@ class HistoryListView extends StatelessWidget {
           },
         );
       },
-    ); 
+    );
   }
+
   // --- ДОДАЙТЕ ЦЕЙ МЕТОД НИЖЧЕ ---
   void _showDetails(BuildContext context, String data) {
     showDialog(
@@ -529,12 +592,11 @@ class HistoryListView extends StatelessWidget {
           // Кнопка копіювання
           TextButton(
             onPressed: () {
-              
               Clipboard.setData(ClipboardData(text: data));
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Скопійовано!")),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text("Скопійовано!")));
             },
             child: const Text("КОПІЮВАТИ"),
           ),
@@ -547,8 +609,6 @@ class HistoryListView extends StatelessWidget {
       ),
     );
   }
-
-
 }
 
 class _GeneratorScreenState extends State<GeneratorScreen> {
@@ -634,16 +694,19 @@ Future<void> saveToHistory(String value, String key) async {
   await prefs.setStringList(key, history);
 }
 
-
-
 void _confirmClearHistory(BuildContext context) {
   showDialog(
     context: context,
     builder: (context) => AlertDialog(
       title: const Text("Очистити все?"),
-      content: const Text("Ви впевнені, що хочете видалити всю історію сканувань та генерацій?"),
+      content: const Text(
+        "Ви впевнені, що хочете видалити всю історію сканувань та генерацій?",
+      ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text("СКАСУВАТИ")),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text("СКАСУВАТИ"),
+        ),
         TextButton(
           onPressed: () async {
             final prefs = await SharedPreferences.getInstance();
