@@ -8,6 +8,8 @@ import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:wifi_iot/wifi_iot.dart';
+import 'package:flutter/services.dart'; // Потрібно для буфера
+
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -203,6 +205,19 @@ class MainMenu extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 40),
+            MenuButton(
+              text: "ІСТОРІЯ",
+              icon: Icons.history,
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const HistoryScreen(),
+                ), // Ваш новий екран
+              ),
+            ),
+
+            const SizedBox(height: 40),
+
             TextButton.icon(
               onPressed: () async {
                 final prefs = await SharedPreferences.getInstance();
@@ -261,7 +276,6 @@ class MenuButton extends StatelessWidget {
 
 class ScannerScreen extends StatefulWidget {
   const ScannerScreen({super.key});
-        
 
   @override
   State<ScannerScreen> createState() => _ScannerScreenState();
@@ -406,10 +420,18 @@ class _ScannerScreenState extends State<ScannerScreen> {
       body: MobileScanner(
         onDetect: (capture) {
           if (_isScanned) return;
+
           final List<Barcode> barcodes = capture.barcodes;
           if (barcodes.isNotEmpty) {
             setState(() => _isScanned = true);
+
+            // 1. Отримуємо текст коду
             final String code = barcodes.first.rawValue ?? "Порожній код";
+
+            // 2. ЗБЕРІГАЄМО В ІСТОРІЮ (використовуємо правильну змінну 'code')
+            saveToHistory(code, 'scan_history');
+
+            // 3. Показуємо діалог
             _showResultDialog(code);
           }
         },
@@ -423,6 +445,110 @@ class GeneratorScreen extends StatefulWidget {
   const GeneratorScreen({super.key});
   @override
   State<GeneratorScreen> createState() => _GeneratorScreenState();
+}
+
+class HistoryScreen extends StatelessWidget {
+  const HistoryScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2, // Дві вкладки
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text("Історія кодів"),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.delete_sweep),
+              onPressed: () => _confirmClearHistory(context),
+            ),
+          ],
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: "Сканування", icon: Icon(Icons.qr_code_scanner)),
+              Tab(text: "Генерація", icon: Icon(Icons.history_edu)),
+            ],
+          ),
+        ),
+        body: const TabBarView(
+          children: [
+            HistoryListView(storageKey: 'scan_history'), // Список для сканів
+            HistoryListView(storageKey: 'gen_history'), // Список для генерацій
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class HistoryListView extends StatelessWidget {
+  final String storageKey;
+  const HistoryListView({super.key, required this.storageKey});
+
+  Future<List<String>> _loadHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(storageKey) ?? [];
+  }
+
+ @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<String>>(
+      future: _loadHistory(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final history = snapshot.data ?? [];
+        if (history.isEmpty) return const Center(child: Text("Історія порожня"));
+
+        return ListView.builder(
+          itemCount: history.length,
+          itemBuilder: (context, index) {
+            final item = history[index];
+            return ListTile(
+              leading: Icon(storageKey == 'scan_history' ? Icons.qr_code_scanner : Icons.edit),
+              title: Text(item, maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: const Text("Натисніть, щоб відкрити"),
+              onTap: () => _showDetails(context, item), // ОСЬ ТУТ ВИКЛИК
+            );
+          },
+        );
+      },
+    ); 
+  }
+  // --- ДОДАЙТЕ ЦЕЙ МЕТОД НИЖЧЕ ---
+  void _showDetails(BuildContext context, String data) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Результат"),
+        content: SingleChildScrollView(
+          child: SelectableText(data), // Можна виділити текст
+        ),
+        actions: [
+          // Кнопка копіювання
+          TextButton(
+            onPressed: () {
+              
+              Clipboard.setData(ClipboardData(text: data));
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Скопійовано!")),
+              );
+            },
+            child: const Text("КОПІЮВАТИ"),
+          ),
+          // Кнопка закриття
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("ОК"),
+          ),
+        ],
+      ),
+    );
+  }
+
+
 }
 
 class _GeneratorScreenState extends State<GeneratorScreen> {
@@ -495,12 +621,40 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
   }
 }
 
-// Заглушка для історії (можна додати пізніше)
-class HistoryTabs extends StatelessWidget {
-  const HistoryTabs({super.key});
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text("Історія")),
-    body: const Center(child: Text("Тут буде ваша історія")),
+Future<void> saveToHistory(String value, String key) async {
+  final prefs = await SharedPreferences.getInstance();
+  List<String> history = prefs.getStringList(key) ?? [];
+
+  // Щоб не було дублікатів підряд
+  if (history.isNotEmpty && history.first == value) return;
+
+  history.insert(0, value); // Нове — на початок
+  if (history.length > 50) history.removeLast(); // Обмежуємо до 50 записів
+
+  await prefs.setStringList(key, history);
+}
+
+
+
+void _confirmClearHistory(BuildContext context) {
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text("Очистити все?"),
+      content: const Text("Ви впевнені, що хочете видалити всю історію сканувань та генерацій?"),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("СКАСУВАТИ")),
+        TextButton(
+          onPressed: () async {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.remove('scan_history');
+            await prefs.remove('gen_history');
+            if (context.mounted) Navigator.pop(context);
+            // Тут можна додати логіку оновлення екрана
+          },
+          child: const Text("ВИДАЛИТИ", style: TextStyle(color: Colors.red)),
+        ),
+      ],
+    ),
   );
 }
